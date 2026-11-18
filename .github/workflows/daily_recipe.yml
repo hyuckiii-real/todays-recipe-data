@@ -3,7 +3,7 @@ name: Daily Recipe Generator
 on:
   schedule:
     # 매일 UTC 15:00 = 한국 시간(KST) 자정 00:00
-    - cron: '0 15 * * *'
+    - cron: '12 15 * * *'
   workflow_dispatch: # 수동 테스트 실행 버튼 활성화
 
 permissions:
