@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from datetime import datetime, timezone, timedelta
 from google import genai
 from google.genai import types
@@ -73,15 +74,29 @@ prompt = f"""
 5. date 필드는 반드시 "{today_str}"로 설정하세요.
 """
 
-response = client.models.generate_content(
-    model="gemini-3.8-flash",
-    contents=prompt,
-    config=types.GenerateContentConfig(
-        response_mime_type="application/json",
-        response_schema=DailyRecipe,
-        temperature=0.8,
-    ),
-)
+# 서버 과부하(503) 대비 느긋한 재시도 로직 (최대 5회)
+response = None
+max_retries = 5
+for attempt in range(1, max_retries + 1):
+    try:
+        print(f"[{attempt}/{max_retries}] 오늘의 요리 생성 요청 중...")
+        response = client.models.generate_content(
+            model="gemini-3.8-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=DailyRecipe,
+                temperature=0.8,
+            ),
+        )
+        break
+    except Exception as e:
+        print(f"[{attempt}/{max_retries}] 일시적 오류 발생: {e}")
+        if attempt == max_retries:
+            raise
+        wait_seconds = attempt * 30  # 30초, 60초, 90초, 120초 대기
+        print(f"서버가 안정될 때까지 {wait_seconds}초 기다렸다가 다시 시도합니다...")
+        time.sleep(wait_seconds)
 
 recipe_data = json.loads(response.text)
 recipe_data["date"] = today_str
