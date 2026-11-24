@@ -4,10 +4,16 @@ on:
   schedule:
     # 매일 UTC 15:00 = 한국 시간(KST) 자정 00:00
     - cron: '17 15 * * *'
+    # 자동복구: KST 06:17, 당일 데이터가 없을 때만 생성
+    - cron: '17 21 * * *'
   workflow_dispatch: # 수동 테스트 실행 버튼 활성화
 
 permissions:
   contents: write
+
+concurrency:
+  group: daily-todays-recipe-data
+  cancel-in-progress: false
 
 jobs:
   generate-recipe:

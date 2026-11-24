@@ -1,6 +1,8 @@
 import os
 import json
 import time
+import re
+import unicodedata
 from datetime import datetime, timezone, timedelta
 from google import genai
 from google.genai import types
@@ -29,10 +31,20 @@ if os.path.exists(archive_path):
     try:
         with open(archive_path, "r", encoding="utf-8") as f:
             archive = json.load(f)
-    except Exception:
-        archive = []
+    except Exception as exc:
+        raise RuntimeError("archive.json 읽기 실패: 이전 메뉴 기록을 보호하기 위해 생성 중단") from exc
 
-past_menus = [item.get("menu_name", "") for item in archive[-60:]]
+def normalize_menu(value):
+    value = unicodedata.normalize("NFKC", str(value)).casefold()
+    return re.sub(r"[^\w가-힣]", "", value)
+
+# 날짜 확인: 복구 실행이나 수동 재실행에서는 이미 만든 콘텐츠를 건드리지 않는다.
+if any(item.get("date") == today_str for item in archive):
+    print(f"[{today_str}] 오늘 메뉴가 이미 있어 생성하지 않습니다.")
+    raise SystemExit(0)
+
+past_menus = [item.get("menu_name", "") for item in archive if item.get("menu_name")]
+used_menus = {normalize_menu(name) for name in past_menus}
 
 class IngredientItem(BaseModel):
     name: str = Field(description="재료명과 분량 (예: 대파 1/2대, 계란 2알)")
@@ -99,6 +111,24 @@ for attempt in range(1, max_retries + 1):
         time.sleep(wait_seconds)
 
 recipe_data = json.loads(response.text)
+# AI 지시만으로 중복 방지를 보장할 수 없으므로 저장 직전에 재검증한다.
+for duplicate_attempt in range(3):
+    name = recipe_data.get("menu_name", "")
+    if name and normalize_menu(name) not in used_menus:
+        break
+    if duplicate_attempt == 2:
+        raise RuntimeError(f"이미 사용한 메뉴가 반복 생성되어 저장 중단: {name}")
+    print(f"중복 메뉴 발견: {name}. 다른 메뉴 재생성 ({duplicate_attempt + 1}/2)")
+    response = client.models.generate_content(
+        model="gemini-3.8-flash",
+        contents=prompt + f"\n중복으로 거절된 메뉴: {name}. 반드시 완전히 다른 메뉴를 골라주세요.",
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=DailyRecipe,
+            temperature=0.9,
+        ),
+    )
+    recipe_data = json.loads(response.text)
 recipe_data["date"] = today_str
 
 with open("today.json", "w", encoding="utf-8") as f:
@@ -108,6 +138,6 @@ with open("today.json", "w", encoding="utf-8") as f:
 archive = [item for item in archive if item.get("date") != today_str]
 archive.append(recipe_data)
 with open("archive.json", "w", encoding="utf-8") as f:
-    json.dump(archive[-100:], f, ensure_ascii=False, indent=2)
+    json.dump(archive, f, ensure_ascii=False, indent=2)
 
 print(f"생성 완료: {recipe_data['menu_name']}")
